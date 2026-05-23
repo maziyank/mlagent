@@ -1,0 +1,54 @@
+datasets:
+  iris:
+    name: iris
+    source: sklearn
+    sklearn_dataset: iris
+    description: "Classic 3-class iris flower classification (150 samples, 4 features)"
+    default_pipeline: multiclass_classification
+    target_column: target
+    task_type: classification
+
+  wine:
+    name: wine
+    source: sklearn
+    sklearn_dataset: wine
+    description: "Wine recognition dataset (178 samples, 13 features, 3 classes)"
+    default_pipeline: multiclass_classification
+    target_column: target
+    task_type: classification
+
+  breast_cancer:
+    name: breast_cancer
+    source: sklearn
+    sklearn_dataset: breast_cancer
+    description: "Wisconsin breast cancer diagnostic (binary classification)"
+    default_pipeline: binary_classification
+    target_column: target
+    task_type: classification
+
+  diabetes:
+    name: diabetes
+    source: sklearn
+    sklearn_dataset: diabetes
+    description: "Diabetes progression regression (442 samples)"
+    default_pipeline: regression
+    target_column: target
+    task_type: regression
+
+  # Example: register a local CSV in config (alternative to --csv on CLI)
+  # my_sales:
+  #   name: my_sales
+  #   source: file
+  #   path: /absolute/or/relative/path/to/sales.csv
+  #   target_column: revenue
+  #   task_type: regression
+  #   default_pipeline: regression
+
+  titanic:
+    name: titanic
+    source: url
+    url: "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
+    description: "Titanic survival prediction (structured, mixed types)"
+    default_pipeline: binary_classification
+    target_column: Survived
+    task_type: classification

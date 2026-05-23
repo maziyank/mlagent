@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.mlagent_runs/
+export/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+docs/benchmark_results.json

@@ -1,0 +1,33 @@
+pipelines:
+  binary_classification:
+    description: "Binary classification on tabular data with train/test split"
+    task_type: classification
+    target_metric: accuracy
+    min_metric: 0.70
+    stages:
+      - data_understanding
+      - data_preparation
+      - modeling
+      - evaluation
+
+  multiclass_classification:
+    description: "Multiclass classification with stratified split"
+    task_type: classification
+    target_metric: accuracy
+    min_metric: 0.65
+    stages:
+      - data_understanding
+      - data_preparation
+      - modeling
+      - evaluation
+
+  regression:
+    description: "Regression with RMSE/MAE evaluation"
+    task_type: regression
+    target_metric: r2
+    min_metric: 0.40
+    stages:
+      - data_understanding
+      - data_preparation
+      - modeling
+      - evaluation
