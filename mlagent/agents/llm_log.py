@@ -124,10 +124,15 @@ def invoke_agent_with_logging(
     model: str,
     run_id: str,
     enabled: bool = True,
+    run_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Invoke a deep agent graph and log LLM / graph state to the terminal."""
+    invoke_kwargs: dict[str, Any] = {}
+    if run_config:
+        invoke_kwargs["config"] = run_config
+
     if not enabled:
-        return agent.invoke(input_state)
+        return agent.invoke(input_state, **invoke_kwargs)
 
     prompt_chars = 0
     messages = input_state.get("messages") or []
@@ -159,6 +164,7 @@ def invoke_agent_with_logging(
             input_state,
             stream_mode=["updates", "messages", "tasks", "values"],
             version="v2",
+            **invoke_kwargs,
         )
         for part in stream:
             if isinstance(part, dict) and "type" in part:
@@ -180,7 +186,7 @@ def invoke_agent_with_logging(
         # Older graphs without version= parameter
         try:
             for mode, data in agent.stream(
-                input_state, stream_mode=["updates", "messages"]
+                input_state, stream_mode=["updates", "messages"], **invoke_kwargs
             ):
                 _log_stream_chunk_v1(data, str(mode))
                 if mode == "updates":
@@ -189,13 +195,13 @@ def invoke_agent_with_logging(
                     final_state = data
         except Exception:
             console.print("[dim]stream unavailable, using invoke()[/dim]")
-            final_state = agent.invoke(input_state)
+            final_state = agent.invoke(input_state, **invoke_kwargs)
     except Exception as exc:
         console.print(f"[red]stream error:[/red] {exc} — falling back to invoke()")
-        final_state = agent.invoke(input_state)
+        final_state = agent.invoke(input_state, **invoke_kwargs)
 
     if final_state is None:
-        final_state = agent.invoke(input_state)
+        final_state = agent.invoke(input_state, **invoke_kwargs)
 
     elapsed = time.perf_counter() - start
     console.print(

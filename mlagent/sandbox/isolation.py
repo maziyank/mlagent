@@ -33,6 +33,7 @@ def build_restricted_env(workspace: Path, extra_paths: list[Path] | None = None)
         "OPENROUTER_",
         "ANTHROPIC_",
         "LANGCHAIN_",
+        "LANGSMITH_",
         "API_KEY",
     )
     for key in list(os.environ):

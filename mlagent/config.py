@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # LLM (OpenRouter via deepagents provider profile)
@@ -22,6 +23,16 @@ class Settings(BaseSettings):
         description="Model for deep agents (provider:model), e.g. openrouter:anthropic/claude-sonnet-4",
     )
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
+
+    # LangSmith (agent observability)
+    langsmith_tracing: bool = Field(
+        default=False,
+        description="Send LangChain/LangGraph traces to LangSmith",
+        validation_alias=AliasChoices("LANGSMITH_TRACING", "MLAGENT_LANGSMITH_TRACING"),
+    )
+    langsmith_api_key: str | None = Field(default=None, validation_alias="LANGSMITH_API_KEY")
+    langsmith_project: str = Field(default="mlagent", validation_alias="LANGSMITH_PROJECT")
+    langsmith_endpoint: str | None = Field(default=None, validation_alias="LANGSMITH_ENDPOINT")
 
     # Pipeline defaults
     workspace_root: Path = Field(default=Path(".mlagent_runs"))

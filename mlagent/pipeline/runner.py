@@ -11,6 +11,12 @@ from rich.console import Console
 from mlagent.agents.llm_log import invoke_agent_with_logging
 from mlagent.agents.orchestrator import build_stage_task_message, create_orchestrator
 from mlagent.config import Settings, get_settings
+from mlagent.observability.langsmith import (
+    agent_tracing_context,
+    build_agent_run_config,
+    configure_langsmith,
+    is_langsmith_active,
+)
 from mlagent.pipeline.datasets import load_dataset_config, materialize_dataset
 from mlagent.pipeline.models import PipelineRun, RunStatus, StageName, StageStatus
 from mlagent.pipeline.stages import StageRunner
@@ -25,6 +31,7 @@ class PipelineRunner:
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
+        configure_langsmith(self.settings)
         self.workspace_mgr = WorkspaceManager(self.settings)
         self.config_dir = self.workspace_mgr.config_dir
 
@@ -84,6 +91,16 @@ class PipelineRunner:
                 task_type=ctx["task_type"],
             )
             input_state = {"messages": [{"role": "user", "content": msg + "\n\n" + prompt}]}
+            run_config = None
+            if is_langsmith_active(self.settings):
+                run_config = build_agent_run_config(
+                    run_id=run.run_id,
+                    stage=stage,
+                    purpose=purpose,
+                    model=self.settings.mlagent_model,
+                    dataset=dataset,
+                    pipeline=pipeline,
+                )
             result = invoke_agent_with_logging(
                 agent,
                 input_state,
@@ -92,6 +109,7 @@ class PipelineRunner:
                 model=self.settings.mlagent_model,
                 run_id=run.run_id,
                 enabled=self.settings.llm_log_enabled,
+                run_config=run_config,
             )
             # Extract last assistant text; agent writes files via tools
             messages = result.get("messages", [])
@@ -113,34 +131,41 @@ class PipelineRunner:
             agent_invoker=agent_invoker if self.settings.execution_mode == "agent" else None,
         )
 
+        tracing_ctx = agent_tracing_context(
+            self.settings,
+            run_id=run.run_id,
+            dataset=dataset,
+            pipeline=pipeline,
+        )
         prior = None
-        for stage in STAGE_ORDER:
-            if on_progress:
-                on_progress(run.run_id, stage.value, "started")
-            console.print(f"[cyan]▶ Stage: {stage.value}[/cyan]")
-
-            state = run.stages[stage.value]
-            state = stage_runner.run_stage(stage, state, ctx, prior, pipe_cfg)
-            run.stages[stage.value] = state
-            run.updated_at = run.updated_at
-            self.workspace_mgr.save_run(run)
-
-            if state.status == StageStatus.FAILED:
-                run.status = RunStatus.FAILED
-                self.workspace_mgr.save_run(run)
+        with tracing_ctx:
+            for stage in STAGE_ORDER:
                 if on_progress:
-                    on_progress(run.run_id, stage.value, "failed")
-                console.print(f"[red]✗ Stage failed: {stage.value} — {state.error}[/red]")
-                return run
+                    on_progress(run.run_id, stage.value, "started")
+                console.print(f"[cyan]▶ Stage: {stage.value}[/cyan]")
 
-            prior = state
-            if state.insights:
-                (ws / "artifacts" / f"{stage.value}_handoff.json").write_text(
-                    json.dumps({"insights": state.insights})
-                )
-            if on_progress:
-                on_progress(run.run_id, stage.value, "completed")
-            console.print(f"[green]✓ Completed: {stage.value}[/green]")
+                state = run.stages[stage.value]
+                state = stage_runner.run_stage(stage, state, ctx, prior, pipe_cfg)
+                run.stages[stage.value] = state
+                run.updated_at = run.updated_at
+                self.workspace_mgr.save_run(run)
+
+                if state.status == StageStatus.FAILED:
+                    run.status = RunStatus.FAILED
+                    self.workspace_mgr.save_run(run)
+                    if on_progress:
+                        on_progress(run.run_id, stage.value, "failed")
+                    console.print(f"[red]✗ Stage failed: {stage.value} — {state.error}[/red]")
+                    return run
+
+                prior = state
+                if state.insights:
+                    (ws / "artifacts" / f"{stage.value}_handoff.json").write_text(
+                        json.dumps({"insights": state.insights})
+                    )
+                if on_progress:
+                    on_progress(run.run_id, stage.value, "completed")
+                console.print(f"[green]✓ Completed: {stage.value}[/green]")
 
         # Final metrics from evaluation
         metrics_path = ws / "metrics.json"

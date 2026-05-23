@@ -13,6 +13,7 @@ from mlagent.agents.subagents import build_subagent_specs
 from mlagent.agents.tools import make_pipeline_tools
 from mlagent.agents.llm_log import console as llm_console
 from mlagent.config import Settings
+from mlagent.observability.langsmith import configure_langsmith, is_langsmith_active
 
 
 def create_orchestrator(
@@ -39,9 +40,14 @@ def create_orchestrator(
     if settings.openrouter_api_key:
         os.environ.setdefault("OPENROUTER_API_KEY", settings.openrouter_api_key)
 
+    configure_langsmith(settings)
+    tracing_note = ""
+    if is_langsmith_active(settings):
+        tracing_note = f" langsmith={settings.langsmith_project}"
+
     llm_console.print(
         f"[bold magenta]Creating orchestrator[/bold magenta] "
-        f"model={model} run={run_id} subagents=4"
+        f"model={model} run={run_id} subagents=4{tracing_note}"
     )
 
     return create_deep_agent(

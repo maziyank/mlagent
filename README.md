@@ -35,6 +35,7 @@ flowchart LR
 - **CLI** — Run, monitor, inspect artifacts, history, export code, generate reports, rerun with new parameters
 - **Template mode** — Deterministic production-ready code (no API key) for benchmarks and CI
 - **Agent mode** — Full LLM-driven code generation and refinement when `OPENROUTER_API_KEY` is set
+- **LangSmith tracing** — Optional LangGraph/LangChain traces with per-run and per-stage metadata when `LANGSMITH_TRACING=true`
 
 ## Setup
 
@@ -58,7 +59,7 @@ mlagent run iris
 # Run with live progress
 mlagent run breast_cancer --watch
 
-# Agent mode (requires OPENROUTER_API_KEY)
+# Agent mode (requires OPENROUTER_API_KEY; optional LANGSMITH_TRACING=true for traces)
 mlagent run wine --mode agent
 
 # Use a specific OpenRouter model
@@ -95,7 +96,7 @@ See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for expected metrics.
 
 - `configs/datasets.yaml` — Public datasets (sklearn + Titanic URL)
 - `configs/pipelines.yaml` — Pipeline types and metric thresholds
-- `.env` — `OPENROUTER_API_KEY`, `MLAGENT_MODEL`, `MLAGENT_EXECUTION_MODE`, optimization settings (`MLAGENT_OPTIMIZATION_*`)
+- `.env` — `OPENROUTER_API_KEY`, `MLAGENT_MODEL`, `MLAGENT_EXECUTION_MODE`, optimization settings (`MLAGENT_OPTIMIZATION_*`), LangSmith (`LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`)
 
 ## Project layout
 
