@@ -31,8 +31,21 @@ class Settings(BaseSettings):
     execution_mode: Literal["agent", "template"] = "template"
     llm_log_enabled: bool = True
 
+    # Continuous optimization (modeling + evaluation)
+    optimization_enabled: bool = Field(default=True, validation_alias="MLAGENT_OPTIMIZATION_ENABLED")
+    optimization_patience: int = Field(default=2, validation_alias="MLAGENT_OPTIMIZATION_PATIENCE")
+    optimization_min_improvement: float = Field(
+        default=0.001, validation_alias="MLAGENT_OPTIMIZATION_MIN_IMPROVEMENT"
+    )
+    optimization_stages: str = Field(
+        default="modeling,evaluation", validation_alias="MLAGENT_OPTIMIZATION_STAGES"
+    )
+
     # Retry
     max_execution_retries: int = 3
+
+    def optimization_stage_set(self) -> set[str]:
+        return {s.strip() for s in self.optimization_stages.split(",") if s.strip()}
 
 
 def get_settings() -> Settings:

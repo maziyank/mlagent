@@ -203,12 +203,19 @@ def status(
     console.print(table)
 
     console.print("\n[bold]Stages[/bold]")
-    st = Table("Stage", "Status", "Iterations", "Error")
+    st = Table("Stage", "Status", "Iterations", "Best Metric", "Error")
     for name, stage in run.stages.items():
+        best = ""
+        if stage.optimization and stage.optimization.best_value is not None:
+            best = (
+                f"{stage.optimization.target_metric}="
+                f"{stage.optimization.best_value:.4f}"
+            )
         st.add_row(
             name,
             stage.status.value,
             str(len(stage.iterations)),
+            best,
             stage.error or "",
         )
     console.print(st)

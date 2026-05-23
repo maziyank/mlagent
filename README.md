@@ -30,6 +30,7 @@ flowchart LR
 
 - **Deep Agents integration** — `create_deep_agent` orchestrator with four stage sub-agents and custom pipeline tools
 - **Sandbox iteration** — Isolated subprocess execution, per-iteration logs, automatic retries, metric parsing via `MLAGENT_METRIC:` lines
+- **Continuous optimization** — Modeling and evaluation stages track best metrics across iterations, keep refining until thresholds are met and improvement plateaus, then restore the best code/artifacts
 - **Cross-agent validation** — Required artifacts checked between stages; incompatible handoffs raise clear errors
 - **CLI** — Run, monitor, inspect artifacts, history, export code, generate reports, rerun with new parameters
 - **Template mode** — Deterministic production-ready code (no API key) for benchmarks and CI
@@ -94,7 +95,7 @@ See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for expected metrics.
 
 - `configs/datasets.yaml` — Public datasets (sklearn + Titanic URL)
 - `configs/pipelines.yaml` — Pipeline types and metric thresholds
-- `.env` — `OPENROUTER_API_KEY`, `MLAGENT_MODEL`, `MLAGENT_EXECUTION_MODE`
+- `.env` — `OPENROUTER_API_KEY`, `MLAGENT_MODEL`, `MLAGENT_EXECUTION_MODE`, optimization settings (`MLAGENT_OPTIMIZATION_*`)
 
 ## Project layout
 

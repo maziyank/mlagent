@@ -58,6 +58,14 @@ class StageArtifact(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class OptimizationSummary(BaseModel):
+    target_metric: str = ""
+    min_metric: float = 0.0
+    best_iteration: int | None = None
+    best_value: float | None = None
+    meets_target: bool = False
+
+
 class StageState(BaseModel):
     name: StageName
     status: StageStatus = StageStatus.PENDING
@@ -66,6 +74,7 @@ class StageState(BaseModel):
     current_code_path: str | None = None
     insights: str = ""
     error: str | None = None
+    optimization: OptimizationSummary | None = None
 
 
 class PipelineRun(BaseModel):

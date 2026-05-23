@@ -1,17 +1,20 @@
-"""Per-stage execution with sandbox iteration."""
+"""Per-stage execution with sandbox iteration and continuous optimization."""
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Callable
 
+from mlagent.agents.optimization import OptimizationTracker
 from mlagent.agents.prompts import REFINEMENT_PROMPT
 from mlagent.config import Settings
 from mlagent.pipeline.datasets import load_dataset_config
 from mlagent.pipeline.models import (
     CodeIteration,
     ExecutionResult,
+    OptimizationSummary,
     StageArtifact,
     StageName,
     StageState,
@@ -50,6 +53,15 @@ class StageRunner:
             task_type=ctx.get("task_type", "classification"),
         )
 
+    def _optimization_enabled(self, stage: StageName) -> bool:
+        # Continuous optimization requires agent-driven code changes between iterations.
+        return (
+            self.settings.optimization_enabled
+            and self.settings.execution_mode == "agent"
+            and self.agent_invoker is not None
+            and stage.value in self.settings.optimization_stage_set()
+        )
+
     def run_stage(
         self,
         stage: StageName,
@@ -66,10 +78,20 @@ class StageRunner:
             or pipeline_cfg.get("min_metric")
             or self.settings.min_accuracy
         )
+        optimize = self._optimization_enabled(stage)
+        tracker: OptimizationTracker | None = None
+        if optimize:
+            tracker = OptimizationTracker(
+                stage=stage.value,
+                target_metric=target_metric,
+                min_metric=min_metric,
+                patience=self.settings.optimization_patience,
+                min_improvement=self.settings.optimization_min_improvement,
+            )
 
         for iteration in range(1, self.settings.max_iterations_per_stage + 1):
             state.status = StageStatus.ITERATING
-            code = self._generate_code(stage, ctx, state, iteration)
+            code = self._generate_code(stage, ctx, state, iteration, tracker)
             code_path = self._write_code(stage, iteration, code)
             result = self._execute_with_retries(code_path)
 
@@ -86,47 +108,221 @@ class StageRunner:
             if result.success:
                 try:
                     validate_stage_outputs(self.workspace, stage, strict=True)
-                    if stage == StageName.EVALUATION and not self._meets_benchmark(
-                        result, target_metric, min_metric
-                    ):
-                        ci.refinement_notes = (
-                            f"Metric {target_metric} below threshold {min_metric}"
+                    metric_val = None
+                    if tracker:
+                        metric_val = tracker.resolve_metric(result, self.workspace)
+                        improved = tracker.update(
+                            iteration,
+                            metric_val,
+                            ci.code_path,
+                            success=True,
                         )
-                        continue
+                        tracker.save(self.workspace)
+                        ci.refinement_notes = self._optimization_notes(
+                            tracker, improved, metric_val
+                        )
+
+                    if optimize and tracker:
+                        if tracker.should_continue(
+                            iteration, self.settings.max_iterations_per_stage
+                        ):
+                            code = self._refine_for_optimization(
+                                stage,
+                                ctx,
+                                iteration,
+                                result,
+                                tracker,
+                                target_metric,
+                                min_metric,
+                            )
+                            self._write_code(stage, iteration + 1, code, suffix="_opt")
+                            continue
+                        return self._complete_with_best(
+                            stage, state, tracker, ctx, target_metric, min_metric
+                        )
+
+                    # Non-optimization stages: complete on first valid run
                     state.status = StageStatus.COMPLETED
                     state.artifacts = self._collect_artifacts(stage)
+                    if tracker:
+                        state.optimization = self._optimization_summary(tracker)
                     return state
+
                 except ValidationError as e:
                     ci.refinement_notes = str(e)
-                    code = self._refine_code(stage, ctx, iteration, result, str(e), target_metric, min_metric)
+                    if tracker:
+                        tracker.update(
+                            iteration, None, ci.code_path, success=False
+                        )
+                        tracker.save(self.workspace)
+                    code = self._refine_code(
+                        stage,
+                        ctx,
+                        iteration,
+                        result,
+                        str(e),
+                        target_metric,
+                        min_metric,
+                        tracker,
+                    )
                     self._write_code(stage, iteration + 1, code, suffix="_fix")
             else:
+                if tracker:
+                    tracker.update(iteration, None, ci.code_path, success=False)
+                    tracker.save(self.workspace)
                 code = self._refine_code(
-                    stage, ctx, iteration, result,
+                    stage,
+                    ctx,
+                    iteration,
+                    result,
                     result.stderr or "Execution failed",
-                    target_metric, min_metric,
+                    target_metric,
+                    min_metric,
+                    tracker,
                 )
                 self._write_code(stage, iteration + 1, code, suffix="_fix")
 
+        # Exhausted iterations — use best effort for optimization stages
+        if optimize and tracker and tracker.best_code_path:
+            return self._complete_with_best(
+                stage, state, tracker, ctx, target_metric, min_metric, allow_below_target=True
+            )
+
         state.status = StageStatus.FAILED
         state.error = f"Max iterations ({self.settings.max_iterations_per_stage}) exceeded"
+        if tracker:
+            state.optimization = self._optimization_summary(tracker)
         return state
 
+    def _complete_with_best(
+        self,
+        stage: StageName,
+        state: StageState,
+        tracker: OptimizationTracker,
+        ctx: dict,
+        target_metric: str,
+        min_metric: float,
+        *,
+        allow_below_target: bool = False,
+    ) -> StageState:
+        """Re-run the best iteration's code and finalize the stage."""
+        best_path = (self.workspace / tracker.best_code_path).resolve()
+        if best_path.exists():
+            run_py = (self.workspace / "code" / stage.value / "run.py").resolve()
+            run_py.parent.mkdir(parents=True, exist_ok=True)
+            if best_path != run_py:
+                shutil.copy2(best_path, run_py)
+            result = self._execute_with_retries(run_py)
+            if result.success:
+                try:
+                    validate_stage_outputs(self.workspace, stage, strict=True)
+                    metric_val = tracker.resolve_metric(result, self.workspace)
+                    if metric_val is not None:
+                        tracker.best_value = metric_val
+                    if allow_below_target or tracker.meets_target():
+                        state.status = StageStatus.COMPLETED
+                        state.artifacts = self._collect_artifacts(stage)
+                        state.optimization = self._optimization_summary(tracker)
+                        tracker.save(self.workspace)
+                        return state
+                except ValidationError:
+                    pass
+
+        if tracker.meets_target():
+            state.status = StageStatus.COMPLETED
+            state.artifacts = self._collect_artifacts(stage)
+        else:
+            state.status = StageStatus.FAILED
+            state.error = (
+                f"Metric {target_metric} best={tracker.best_value} "
+                f"below threshold {min_metric}"
+            )
+        state.optimization = self._optimization_summary(tracker)
+        tracker.save(self.workspace)
+        return state
+
+    def _optimization_summary(self, tracker: OptimizationTracker) -> OptimizationSummary:
+        return OptimizationSummary(
+            target_metric=tracker.target_metric,
+            min_metric=tracker.min_metric,
+            best_iteration=tracker.best_iteration,
+            best_value=tracker.best_value,
+            meets_target=tracker.meets_target(),
+        )
+
+    def _optimization_notes(
+        self,
+        tracker: OptimizationTracker,
+        improved: bool,
+        metric_val: float | None,
+    ) -> str:
+        parts = [
+            f"metric={metric_val}",
+            f"best={tracker.best_value} (iter {tracker.best_iteration})",
+            f"target>={tracker.min_metric}",
+            f"stagnation={tracker.stagnation_count}/{tracker.patience}",
+        ]
+        if improved:
+            parts.append("new_best")
+        return "; ".join(parts)
+
+    def _refine_for_optimization(
+        self,
+        stage: StageName,
+        ctx: dict,
+        iteration: int,
+        result: ExecutionResult,
+        tracker: OptimizationTracker,
+        target_metric: str,
+        min_metric: float,
+    ) -> str:
+        hint = (
+            f"Continuous optimization: improve {target_metric} beyond "
+            f"best={tracker.best_value} (threshold {min_metric}). "
+            "Try stronger models, hyperparameter tuning, feature engineering, "
+            "or class balancing."
+        )
+        return self._refine_code(
+            stage,
+            ctx,
+            iteration,
+            result,
+            hint,
+            target_metric,
+            min_metric,
+            tracker,
+        )
+
     def _generate_code(
-        self, stage: StageName, ctx: dict, state: StageState, iteration: int
+        self,
+        stage: StageName,
+        ctx: dict,
+        state: StageState,
+        iteration: int,
+        tracker: OptimizationTracker | None,
     ) -> str:
         if iteration > 1 and state.iterations:
             last = state.iterations[-1]
             return self._refine_code(
-                stage, ctx, iteration - 1, last.result,
+                stage,
+                ctx,
+                iteration - 1,
+                last.result,
                 last.refinement_notes or last.result.stderr,
                 ctx.get("target_metric", "accuracy"),
                 float(ctx.get("min_metric", self.settings.min_accuracy)),
+                tracker,
             )
         if self.agent_invoker and self.settings.execution_mode == "agent":
+            opt_hint = ""
+            if tracker:
+                opt_hint = (
+                    f"\nContinuous optimization enabled for {stage.value}. "
+                    f"Maximize {tracker.target_metric} (target >= {tracker.min_metric})."
+                )
             prompt = (
                 f"Generate complete Python for stage {stage.value}. "
-                f"Context: {json.dumps(ctx)}"
+                f"Context: {json.dumps(ctx)}{opt_hint}"
             )
             return self.agent_invoker(stage.value, prompt, purpose="generate")
         return self.code_generator(stage, ctx)
@@ -140,8 +336,16 @@ class StageRunner:
         error: str,
         target_metric: str,
         min_metric: float,
+        tracker: OptimizationTracker | None = None,
     ) -> str:
         if self.agent_invoker and self.settings.execution_mode == "agent":
+            best_context = ""
+            if tracker:
+                best_context = (
+                    f"\nBest so far: {tracker.target_metric}={tracker.best_value} "
+                    f"at iteration {tracker.best_iteration}. "
+                    f"Stagnation: {tracker.stagnation_count}/{tracker.patience}."
+                )
             prompt = REFINEMENT_PROMPT.format(
                 stage=stage.value,
                 iteration=iteration,
@@ -150,15 +354,10 @@ class StageRunner:
                 target_metric=target_metric,
                 min_metric=min_metric,
                 stdout=result.stdout[-3000:],
-                stderr=(error + "\n" + result.stderr)[-3000:],
+                stderr=(error + "\n" + result.stderr + best_context)[-3000:],
             )
             return self.agent_invoker(stage.value, prompt, purpose="refine")
-        # Template mode: return same template (deterministic pipelines should pass first try)
         return self.code_generator(stage, ctx)
-
-    def _refine(self, *args, **kwargs):
-        self._refine_code(*args[0:6])  # noqa — placeholder for agent path
-        return args[1]  # state unchanged in template mode
 
     def _write_code(
         self, stage: StageName, iteration: int, code: str, suffix: str = ""
@@ -170,7 +369,6 @@ class StageRunner:
         else:
             path = stage_dir / f"run_{iteration:03d}{suffix}.py"
         path.write_text(code)
-        # Always update main entrypoint
         (stage_dir / "run.py").write_text(code)
         return path
 
@@ -198,19 +396,6 @@ class StageRunner:
                 indent=2,
             )
         )
-
-    def _meets_benchmark(
-        self, result: ExecutionResult, target_metric: str, min_metric: float
-    ) -> bool:
-        val = result.metrics.get(target_metric)
-        if val is None:
-            metrics_file = self.workspace / "metrics.json"
-            if metrics_file.exists():
-                data = json.loads(metrics_file.read_text())
-                val = data.get(target_metric)
-        if val is None:
-            return True  # no metric to check
-        return float(val) >= min_metric
 
     def _collect_artifacts(self, stage: StageName) -> list[StageArtifact]:
         artifacts = []

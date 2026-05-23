@@ -56,3 +56,18 @@ Each sandbox execution logs to:
 ```
 
 Agents (or the template runner) use stdout/stderr and metrics from these logs for refinement.
+
+## Continuous optimization
+
+For `modeling` and `evaluation` stages, the runner keeps iterating after a successful run when:
+
+- The target metric is below the pipeline threshold, or
+- The metric is above threshold but still improving (until `MLAGENT_OPTIMIZATION_PATIENCE` stagnant iterations).
+
+Best metrics and code paths are stored in:
+
+```
+.mlagent_runs/<run_id>/artifacts/optimization_state.json
+```
+
+The stage completes using the best-performing iteration, not necessarily the last one.

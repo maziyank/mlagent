@@ -78,6 +78,8 @@ Prior stage insights:
 Instructions:
 1. Write production-ready Python to code/{stage}/run.py
 2. Run via execute_sandbox_code and iterate until validation passes
-3. Register key insights with register_stage_insight for the next agent
-4. Required artifacts must exist before marking complete
+3. For modeling/evaluation: use continuous optimization — call get_optimization_status
+   after each run and keep refining until metrics plateau or meet thresholds
+4. Register key insights with register_stage_insight for the next agent
+5. Required artifacts must exist before marking complete
 """

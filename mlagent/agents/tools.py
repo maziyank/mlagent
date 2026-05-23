@@ -8,7 +8,8 @@ from typing import Annotated
 
 from langchain_core.tools import tool
 
-from mlagent.pipeline.models import ExecutionResult, StageName
+from mlagent.agents.optimization import OptimizationTracker
+from mlagent.pipeline.models import StageName
 from mlagent.pipeline.validation import ValidationError, validate_stage_outputs
 from mlagent.sandbox.executor import SandboxExecutor
 
@@ -83,10 +84,26 @@ def make_pipeline_tools(workspace: Path, run_id: str):
         path.write_text(insight)
         return json.dumps({"saved": str(path.relative_to(workspace))})
 
+    @tool
+    def get_optimization_status(
+        stage: Annotated[str, "Stage name (modeling or evaluation)"],
+    ) -> str:
+        """Return continuous optimization progress: best metric, stagnation, history."""
+        status = OptimizationTracker.load(workspace, stage)
+        if status is None:
+            return json.dumps(
+                {
+                    "stage": stage,
+                    "message": "No optimization data yet for this stage.",
+                }
+            )
+        return json.dumps(status, indent=2)
+
     return [
         execute_sandbox_code,
         validate_stage_artifacts,
         list_workspace_artifacts,
         read_run_manifest,
         register_stage_insight,
+        get_optimization_status,
     ]
