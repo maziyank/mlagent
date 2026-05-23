@@ -9,6 +9,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 
 from mlagent.agents.optimization import OptimizationTracker
+from mlagent.agents.workspace_guide import build_workspace_context
 from mlagent.pipeline.models import StageName
 from mlagent.pipeline.validation import ValidationError, validate_stage_outputs
 from mlagent.sandbox.executor import SandboxExecutor
@@ -52,18 +53,27 @@ def make_pipeline_tools(workspace: Path, run_id: str):
             return json.dumps({"valid": False, "error": str(e)})
 
     @tool
+    def get_workspace_guide(
+        stage: Annotated[
+            str | None,
+            "Pipeline stage name, or omit for full layout",
+        ] = None,
+    ) -> str:
+        """Return workspace layout, path conventions, and stage I/O. Call once per stage."""
+        meta_path = workspace / "data" / "dataset_meta.json"
+        dataset_meta = None
+        if meta_path.exists():
+            dataset_meta = json.loads(meta_path.read_text())
+        ctx = build_workspace_context(
+            workspace, stage=stage, dataset_meta=dataset_meta
+        )
+        return json.dumps(ctx, indent=2)
+
+    @tool
     def list_workspace_artifacts() -> str:
-        """List files in workspace data/, code/, models/, logs/."""
-        listing = {}
-        for sub in ("data", "code", "models", "logs", "artifacts"):
-            d = workspace / sub
-            if d.exists():
-                listing[sub] = [
-                    str(p.relative_to(workspace))
-                    for p in d.rglob("*")
-                    if p.is_file()
-                ]
-        return json.dumps(listing, indent=2)
+        """List existing files under data/, code/, models/, logs/, artifacts/. Prefer over ls/glob."""
+        ctx = build_workspace_context(workspace)
+        return json.dumps(ctx["existing_files"], indent=2)
 
     @tool
     def read_run_manifest() -> str:
@@ -102,6 +112,7 @@ def make_pipeline_tools(workspace: Path, run_id: str):
     return [
         execute_sandbox_code,
         validate_stage_artifacts,
+        get_workspace_guide,
         list_workspace_artifacts,
         read_run_manifest,
         register_stage_insight,

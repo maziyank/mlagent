@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 
+from mlagent.agents.workspace_guide import seed_stage_directories, write_workspace_layout
 from mlagent.config import Settings, get_settings
 from mlagent.pipeline.models import (
     PipelineRun,
@@ -54,6 +55,8 @@ class WorkspaceManager:
 
         for sub in ("code", "data", "models", "reports", "logs", "artifacts"):
             (run_dir / sub).mkdir(exist_ok=True)
+        write_workspace_layout(run_dir)
+        seed_stage_directories(run_dir)
 
         stages = {
             s.value: StageState(name=s)

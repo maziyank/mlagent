@@ -11,6 +11,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, StateBacken
 from mlagent.agents.prompts import ORCHESTRATOR_PROMPT
 from mlagent.agents.subagents import build_subagent_specs
 from mlagent.agents.tools import make_pipeline_tools
+from mlagent.agents.workspace_guide import format_workspace_context_for_prompt
 from mlagent.agents.llm_log import console as llm_console
 from mlagent.config import Settings
 from mlagent.observability.langsmith import configure_langsmith, is_langsmith_active
@@ -70,6 +71,8 @@ def build_stage_task_message(
     prior_insights: str = "",
 ) -> str:
     """User message for delegating a stage to a sub-agent."""
+    ws = Path(workspace)
+    layout_block = format_workspace_context_for_prompt(ws, stage=stage)
     return f"""Execute the '{stage}' stage for pipeline run.
 
 Dataset: {dataset}
@@ -81,11 +84,12 @@ Task type: {task_type}
 Prior stage insights:
 {prior_insights or "None — first stage or no insights recorded."}
 
+{layout_block}
+
 Instructions:
-1. Write production-ready Python to code/{stage}/run.py
-2. Run via execute_sandbox_code and iterate until validation passes
-3. For modeling/evaluation: use continuous optimization — call get_optimization_status
-   after each run and keep refining until metrics plateau or meet thresholds
-4. Register key insights with register_stage_insight for the next agent
-5. Required artifacts must exist before marking complete
+1. Call get_workspace_guide("{stage}") once — do not explore with ls/glob
+2. Write production-ready Python to /workspace/code/{stage}/run.py
+3. Run execute_sandbox_code("code/{stage}/run.py", stage="{stage}") until validate_stage_artifacts passes
+4. For modeling/evaluation: call get_optimization_status after each run; refine until metrics plateau
+5. Register key insights with register_stage_insight for the next agent
 """
